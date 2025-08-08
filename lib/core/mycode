@@ -1,0 +1,1606 @@
+Here is my code
+import 'package:daily_expense_tracker/config/router/router.dart';
+import 'package:daily_expense_tracker/core/constants/router_constants.dart';
+import 'package:daily_expense_tracker/features/auth/data/models/user_model.dart';
+import 'package:daily_expense_tracker/features/auth/presentation/auth/login/view.dart';
+import 'package:daily_expense_tracker/features/expense/presentation/expense/cubit.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:path_provider/path_provider.dart';
+import 'firebase_options.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:daily_expense_tracker/config/router/injection.dart' as di;
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  final appDocumentDir = await getApplicationDocumentsDirectory();
+  Hive.init(appDocumentDir.path);
+  Hive.registerAdapter(UserModelAdapter());
+  await di.init();
+
+  runApp(
+    MultiBlocProvider(
+      providers: [
+        BlocProvider<ExpenseCubit>(
+          create: (_) => di.sl<ExpenseCubit>()..fetchExpenses(),
+        ),
+      ],
+      child: MyApp(),
+    ),
+  );
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  // This widget is the root of your application.
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp.router(
+      debugShowCheckedModeBanner: false,
+      title: 'Daily Expense Task',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+      ),
+      routerConfig: appRouter,
+    );
+  }
+}
+
+// presentation/pages/splash_page.dart
+
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import 'package:hive/hive.dart';
+
+import '../../../core/constants/router_constants.dart';
+import '../../auth/data/models/user_model.dart';
+
+class SplashPage extends StatefulWidget {
+  const SplashPage({super.key});
+
+  @override
+  State<SplashPage> createState() => _SplashPageState();
+}
+
+class _SplashPageState extends State<SplashPage> {
+  @override
+  void initState() {
+    super.initState();
+    _checkLoginStatus();
+  }
+
+  Future<void> _checkLoginStatus() async {
+    await Future.delayed(const Duration(seconds: 2)); // just for splash effect
+    final userBox = await Hive.openBox<UserModel>('userBox');
+    final user = userBox.get('user');
+
+    if (user != null) {
+      context.goNamed(RouterConstants.expense);
+    } else {
+      context.goNamed(RouterConstants.register);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      body: Center(
+        child: Text("Daily Expense Tracker"), // You can use a logo/image here
+      ),
+    );
+  }
+}
+
+import 'package:daily_expense_tracker/core/network/network_listner.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+
+import '../../../../config/router/injection.dart';
+import '../../domain/entities/expense_entity.dart';
+import 'cubit.dart';
+import 'state.dart';
+
+class ExpensePage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return NetworkListener(
+      child: Scaffold(
+        appBar: AppBar(title: Text('Expenses')),
+        body: BlocBuilder<ExpenseCubit, ExpenseState>(
+          builder: (context, state) {
+            if (state.loading)
+              return Center(child: CircularProgressIndicator());
+            if (state.error != null) return Center(child: Text(state.error!));
+            if (state.expenses.isEmpty)
+              return Center(child: Text('No Expenses Found'));
+
+            return ListView.builder(
+              itemCount: state.expenses.length,
+              itemBuilder: (context, index) {
+                final exp = state.expenses[index];
+                return ListTile(
+                  title: Text(
+                    '${exp.category}: \$${exp.amount.toStringAsFixed(2)}',
+                  ),
+                  subtitle: Text(exp.note ?? ''),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (!exp.isValid)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 4.0),
+                          child: Icon(
+                            Icons.error_outline,
+                            color: Colors.orange,
+                            size: 20,
+                          ),
+                        ),
+                      PopupMenuButton<String>(
+                        onSelected: (value) {
+                          if (value == 'invalid') {
+                            showDialog(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: Text('Mark as Invalid?'),
+                                content: Text(
+                                  'Are you sure you want to mark this expense as invalid?',
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx),
+                                    child: Text('Cancel'),
+                                  ),
+                                  ElevatedButton(
+                                    onPressed: () {
+                                      context
+                                          .read<ExpenseCubit>()
+                                          .invalidateExpense(exp.id);
+                                      Navigator.pop(ctx);
+                                    },
+                                    child: Text('Yes'),
+                                  ),
+                                ],
+                              ),
+                            );
+                          } else if (value == 'delete') {
+                            showDialog(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: Text('Delete Expense?'),
+                                content: Text('This action cannot be undone.'),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx),
+                                    child: Text('Cancel'),
+                                  ),
+                                  ElevatedButton(
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.red,
+                                    ),
+                                    onPressed: () {
+                                      context
+                                          .read<ExpenseCubit>()
+                                          .removeExpense(exp.id);
+                                      Navigator.pop(ctx);
+                                    },
+                                    child: Text('Delete'),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          if (exp.isValid)
+                            PopupMenuItem(
+                              value: 'invalid',
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.error_outline,
+                                    color: Colors.orange,
+                                  ),
+                                  SizedBox(width: 8),
+                                  Text('Mark Invalid'),
+                                ],
+                              ),
+                            ),
+                          PopupMenuItem(
+                            value: 'delete',
+                            child: Row(
+                              children: [
+                                Icon(Icons.delete, color: Colors.red),
+                                SizedBox(width: 8),
+                                Text('Delete'),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        ),
+        floatingActionButton: FloatingActionButton(
+          onPressed: () async {
+            _showAddExpenseDialog(context);
+          },
+          child: Icon(Icons.add),
+        ),
+      ),
+    );
+  }
+
+  void _showAddExpenseDialog(BuildContext parentContext) {
+    final _amountController = TextEditingController();
+    final _categoryController = TextEditingController();
+    final _noteController = TextEditingController();
+
+    showDialog(
+      context: parentContext,
+      builder: (ctx) => AlertDialog(
+        title: Text("Add Expense"),
+        content: SingleChildScrollView(
+          child: Column(
+            children: [
+              TextField(
+                controller: _amountController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(labelText: 'Amount'),
+              ),
+              TextField(
+                controller: _categoryController,
+                decoration: InputDecoration(labelText: 'Category'),
+              ),
+              TextField(
+                controller: _noteController,
+                decoration: InputDecoration(labelText: 'Note (optional)'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+            },
+            child: Text("Cancel"),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final amount = double.tryParse(_amountController.text);
+              final category = _categoryController.text.trim();
+
+              if (amount == null || category.isEmpty) {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  SnackBar(content: Text('Please enter valid data')),
+                );
+                return;
+              }
+
+              final expense = ExpenseEntity(
+                id: DateTime.now().millisecondsSinceEpoch.toString(),
+                amount: amount,
+                category: category,
+                date: DateTime.now(),
+                note: _noteController.text.trim(),
+              );
+
+              /// 🛠️ FIX: Use `ctx.read<ExpenseCubit>()` instead of parentContext
+              ctx.read<ExpenseCubit>().createExpense(expense);
+
+              Navigator.of(ctx).pop();
+            },
+            child: Text("Save"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEditExpenseDialog(
+    BuildContext parentContext,
+    ExpenseEntity expense,
+  ) {
+    final _amountController = TextEditingController(
+      text: expense.amount.toString(),
+    );
+    final _categoryController = TextEditingController(text: expense.category);
+    final _noteController = TextEditingController(text: expense.note ?? '');
+
+    showDialog(
+      context: parentContext,
+      builder: (ctx) => AlertDialog(
+        title: Text("Edit Expense"),
+        content: SingleChildScrollView(
+          child: Column(
+            children: [
+              TextField(
+                controller: _amountController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(labelText: 'Amount'),
+              ),
+              TextField(
+                controller: _categoryController,
+                decoration: InputDecoration(labelText: 'Category'),
+              ),
+              TextField(
+                controller: _noteController,
+                decoration: InputDecoration(labelText: 'Note (optional)'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text("Cancel"),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final amount = double.tryParse(_amountController.text);
+              final category = _categoryController.text.trim();
+
+              if (amount == null || category.isEmpty) {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  SnackBar(content: Text('Please enter valid data')),
+                );
+                return;
+              }
+
+              final updatedExpense = ExpenseEntity(
+                id: expense.id,
+                amount: amount,
+                category: category,
+                date: expense.date,
+                // Keep original date
+                note: _noteController.text.trim(),
+                isValid: expense.isValid,
+              );
+
+              ctx.read<ExpenseCubit>().updateExistingExpense(updatedExpense);
+              Navigator.of(ctx).pop();
+            },
+            child: Text("Update"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showExpenseOptions(BuildContext context, ExpenseEntity expense) {
+    showModalBottomSheet(
+      context: context,
+      builder: (sheetCtx) => Wrap(
+        children: [
+          ListTile(
+            leading: Icon(Icons.delete, color: Colors.red),
+            title: Text('Delete'),
+            onTap: () {
+              sheetCtx.read<ExpenseCubit>().removeExpense(expense.id);
+              Navigator.pop(sheetCtx);
+            },
+          ),
+          ListTile(
+            leading: Icon(Icons.block, color: Colors.orange),
+            title: Text('Mark Invalid'),
+            onTap: () {
+              sheetCtx.read<ExpenseCubit>().invalidateExpense(expense.id);
+              Navigator.pop(sheetCtx);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+import '../../domain/entities/expense_entity.dart';
+
+class ExpenseState {
+  final List<ExpenseEntity> expenses;
+  final bool loading;
+  final String? error;
+
+  ExpenseState({this.expenses = const [], this.loading = false, this.error});
+
+  ExpenseState copyWith({
+    List<ExpenseEntity>? expenses,
+    bool? loading,
+    String? error,
+  }) {
+    return ExpenseState(
+      expenses: expenses ?? this.expenses,
+      loading: loading ?? this.loading,
+      error: error,
+    );
+  }
+}
+
+import 'package:daily_expense_tracker/features/expense/presentation/expense/state.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+
+import '../../../../core/network/network_service.dart';
+import '../../domain/entities/expense_entity.dart';
+import '../../domain/usecase/add_expense_usecase.dart';
+import '../../domain/usecase/delete_expense_usecase.dart';
+import '../../domain/usecase/get_expense_usecase.dart';
+import '../../domain/usecase/mark_invalid_expense_usecase.dart';
+import '../../domain/usecase/update_expense_usecase.dart';
+
+class ExpenseCubit extends Cubit<ExpenseState> {
+  final GetExpensesUseCase getExpenses;
+  final AddExpenseUseCase addExpense;
+  final UpdateExpenseUseCase updateExpense;
+  final DeleteExpenseUseCase deleteExpense;
+  final MarkInvalidExpenseUseCase markInvalidExpense;
+  final NetworkService networkService;
+
+  ExpenseCubit({
+    required this.getExpenses,
+    required this.addExpense,
+    required this.updateExpense,
+    required this.deleteExpense,
+    required this.markInvalidExpense,
+    required this.networkService,
+  }) : super(ExpenseState());
+
+  Future<void> _checkConnectionOrThrow() async {
+    if (!await networkService.hasConnection()) {
+      throw Exception("No internet connection");
+    }
+  }
+
+  Future<void> fetchExpenses() async {
+    emit(state.copyWith(loading: true));
+    try {
+      await _checkConnectionOrThrow();
+      final list = await getExpenses();
+      emit(state.copyWith(expenses: list, loading: false));
+    } catch (e, stacktrace) {
+      print("Error fetching expenses: $e");
+      print("Stacktrace: $stacktrace");
+      emit(state.copyWith(error: e.toString(), loading: false));
+    }
+  }
+
+  Future<void> createExpense(ExpenseEntity e) async {
+    try {
+      await _checkConnectionOrThrow();
+      await addExpense(e);
+      await fetchExpenses();
+    } catch (e) {
+      emit(state.copyWith(error: e.toString()));
+    }
+  }
+
+  Future<void> updateExistingExpense(ExpenseEntity e) async {
+    try {
+      await _checkConnectionOrThrow();
+      await updateExpense(e);
+      await fetchExpenses();
+    } catch (e) {
+      emit(state.copyWith(error: e.toString()));
+    }
+  }
+
+  Future<void> removeExpense(String id) async {
+    try {
+      await _checkConnectionOrThrow();
+      await deleteExpense(id);
+      await fetchExpenses();
+    } catch (e) {
+      emit(state.copyWith(error: e.toString()));
+    }
+  }
+
+  Future<void> invalidateExpense(String id) async {
+    try {
+      await _checkConnectionOrThrow();
+      await markInvalidExpense(id);
+      await fetchExpenses();
+    } catch (e) {
+      emit(state.copyWith(error: e.toString()));
+    }
+  }
+}
+
+import '../entities/expense_entity.dart';
+import '../repositories/expense_repository.dart';
+
+class UpdateExpenseUseCase {
+  final ExpenseRepository repo;
+
+  UpdateExpenseUseCase(this.repo);
+
+  Future<void> call(ExpenseEntity expense) => repo.updateExpense(expense);
+}
+
+import '../repositories/expense_repository.dart';
+
+class MarkInvalidExpenseUseCase {
+  final ExpenseRepository repo;
+
+  MarkInvalidExpenseUseCase(this.repo);
+
+  Future<void> call(String id) => repo.markInvalid(id);
+}
+
+import '../entities/expense_entity.dart';
+import '../repositories/expense_repository.dart';
+
+class GetExpensesUseCase {
+  final ExpenseRepository repo;
+
+  GetExpensesUseCase(this.repo);
+
+  Future<List<ExpenseEntity>> call() => repo.getExpenses();
+}
+
+import '../repositories/expense_repository.dart';
+
+class DeleteExpenseUseCase {
+  final ExpenseRepository repo;
+
+  DeleteExpenseUseCase(this.repo);
+
+  Future<void> call(String id) => repo.deleteExpense(id);
+}
+
+import '../entities/expense_entity.dart';
+import '../repositories/expense_repository.dart';
+
+class AddExpenseUseCase {
+  final ExpenseRepository repo;
+
+  AddExpenseUseCase(this.repo);
+
+  Future<void> call(ExpenseEntity expense) => repo.addExpense(expense);
+}
+
+import '../entities/expense_entity.dart';
+
+abstract class ExpenseRepository {
+  Future<List<ExpenseEntity>> getExpenses();
+
+  Future<void> addExpense(ExpenseEntity expense);
+
+  Future<void> updateExpense(ExpenseEntity expense);
+
+  Future<void> deleteExpense(String expenseId);
+
+  Future<void> markInvalid(String expenseId);
+}
+
+class ExpenseEntity {
+  final String id;
+  final double amount;
+  final String category;
+  final DateTime date;
+  final String? note;
+  final bool isValid;
+
+  const ExpenseEntity({
+    required this.id,
+    required this.amount,
+    required this.category,
+    required this.date,
+    this.note,
+    this.isValid = true,
+  });
+}
+
+import 'package:firebase_auth/firebase_auth.dart';
+
+import '../../domain/entities/expense_entity.dart';
+import '../../domain/repositories/expense_repository.dart';
+import '../datasources/expense_remote_datasources.dart';
+import '../models/expense_model.dart';
+
+class ExpenseRepositoryImpl implements ExpenseRepository {
+  final ExpenseRemoteDataSource remote;
+
+
+  ExpenseRepositoryImpl(this.remote);
+
+  @override
+  Future<void> addExpense(ExpenseEntity expense) async {
+    // await remote.addExpense(userId, expense as ExpenseModel);
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    final model = ExpenseModel.fromEntity(expense);
+    await remote.addExpense(userId ?? "", model);
+
+  }
+
+  @override
+  Future<void> deleteExpense(String expenseId) async {
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    await remote.deleteExpense(userId ?? "", expenseId);
+  }
+
+  @override
+  Future<List<ExpenseEntity>> getExpenses() async {
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    return await remote.getAllExpenses(userId ?? "");
+  }
+
+  @override
+  Future<void> updateExpense(ExpenseEntity expense) async {
+    // await remote.updateExpense(userId, expense as ExpenseModel);
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    final model = ExpenseModel.fromEntity(expense);
+    await remote.updateExpense(userId ?? "", model);
+  }
+
+  @override
+  Future<void> markInvalid(String expenseId) async {
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    await remote.markInvalid(userId ?? "", expenseId);
+  }
+}
+
+// GENERATED CODE - DO NOT MODIFY BY HAND
+
+part of 'expense_model.dart';
+
+// **************************************************************************
+// TypeAdapterGenerator
+// **************************************************************************
+
+class ExpenseModelAdapter extends TypeAdapter<ExpenseModel> {
+  @override
+  final int typeId = 1;
+
+  @override
+  ExpenseModel read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
+    return ExpenseModel(
+      id: fields[0] as String,
+      amount: fields[1] as double,
+      category: fields[2] as String,
+      date: fields[3] as DateTime,
+      note: fields[4] as String?,
+      isValid: fields[5] as bool,
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, ExpenseModel obj) {
+    writer
+      ..writeByte(6)
+      ..writeByte(0)
+      ..write(obj.id)
+      ..writeByte(1)
+      ..write(obj.amount)
+      ..writeByte(2)
+      ..write(obj.category)
+      ..writeByte(3)
+      ..write(obj.date)
+      ..writeByte(4)
+      ..write(obj.note)
+      ..writeByte(5)
+      ..write(obj.isValid);
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ExpenseModelAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
+
+
+import 'package:hive/hive.dart';
+import '../../domain/entities/expense_entity.dart';
+part 'expense_model.g.dart';
+
+@HiveType(typeId: 1)
+class ExpenseModel extends ExpenseEntity {
+  @HiveField(0)
+  final String id;
+
+  @HiveField(1)
+  final double amount;
+
+  @HiveField(2)
+  final String category;
+
+  @HiveField(3)
+  final DateTime date;
+
+  @HiveField(4)
+  final String? note;
+
+  @HiveField(5)
+  final bool isValid;
+
+  const ExpenseModel({
+    required this.id,
+    required this.amount,
+    required this.category,
+    required this.date,
+    this.note,
+    this.isValid = true,
+  }) : super(
+    id: id,
+    amount: amount,
+    category: category,
+    date: date,
+    note: note,
+    isValid: isValid,
+  );
+
+  factory ExpenseModel.fromMap(Map<String, dynamic> map, String id) {
+    return ExpenseModel(
+      id: id,
+      amount: map['amount'],
+      category: map['category'],
+      date: DateTime.parse(map['date']),
+      note: map['note'],
+      isValid: map['isValid'] ?? true,
+    );
+  }
+
+  factory ExpenseModel.fromEntity(ExpenseEntity entity) {
+    return ExpenseModel(
+      id: entity.id,
+      amount: entity.amount,
+      category: entity.category,
+      date: entity.date,
+      note: entity.note,
+      isValid: entity.isValid,
+    );
+  }
+
+
+  Map<String, dynamic> toMap() {
+    return {
+      'amount': amount,
+      'category': category,
+      'date': date.toIso8601String(),
+      'note': note,
+      'isValid': isValid,
+    };
+  }
+}
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+import '../models/expense_model.dart';
+
+abstract class ExpenseRemoteDataSource {
+  Future<List<ExpenseModel>> getAllExpenses(String userId);
+
+  Future<void> addExpense(String userId, ExpenseModel expense);
+
+  Future<void> updateExpense(String userId, ExpenseModel expense);
+
+  Future<void> deleteExpense(String userId, String expenseId);
+
+  Future<void> markInvalid(String userId, String expenseId);
+}
+
+class ExpenseRemoteDataSourceImpl implements ExpenseRemoteDataSource {
+  final FirebaseFirestore firestore;
+
+  ExpenseRemoteDataSourceImpl(this.firestore);
+
+  @override
+  Future<List<ExpenseModel>> getAllExpenses(String userId) async {
+    final snapshot = await firestore
+        .collection('users')
+        .doc(userId)
+        .collection('expenses')
+        .orderBy('date', descending: true)
+        .get();
+
+    return snapshot.docs
+        .map((doc) => ExpenseModel.fromMap(doc.data(), doc.id))
+        .toList();
+  }
+
+  @override
+  Future<void> addExpense(String userId, ExpenseModel expense) async {
+    await firestore
+        .collection('users')
+        .doc(userId)
+        .collection('expenses')
+        .add(expense.toMap());
+  }
+
+  @override
+  Future<void> updateExpense(String userId, ExpenseModel expense) async {
+    await firestore
+        .collection('users')
+        .doc(userId)
+        .collection('expenses')
+        .doc(expense.id)
+        .update(expense.toMap());
+  }
+
+  @override
+  Future<void> deleteExpense(String userId, String expenseId) async {
+    await firestore
+        .collection('users')
+        .doc(userId)
+        .collection('expenses')
+        .doc(expenseId)
+        .delete();
+  }
+
+  @override
+  Future<void> markInvalid(String userId, String expenseId) async {
+    await firestore
+        .collection('users')
+        .doc(userId)
+        .collection('expenses')
+        .doc(expenseId)
+        .update({'isValid': false});
+  }
+}
+
+import 'package:daily_expense_tracker/core/constants/router_constants.dart';
+import 'package:daily_expense_tracker/features/auth/presentation/auth/register/state.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../../../../config/router/injection.dart';
+
+import '../../../domain/usecase/register_usecase.dart';
+import 'cubit.dart';
+
+class RegisterPage extends StatefulWidget {
+  const RegisterPage({super.key});
+
+  @override
+  State<RegisterPage> createState() => _RegisterPageState();
+}
+
+class _RegisterPageState extends State<RegisterPage> {
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController? _nameController = TextEditingController();
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocProvider(
+      create: (context) =>
+          RegisterCubit(registerUseCase: sl<RegisterUseCase>()),
+      child: Scaffold(
+        appBar: AppBar(title: Text('Register')),
+        body: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: BlocConsumer<RegisterCubit, RegisterState>(
+            listener: (context, state) {
+              if (state is RegisterFailure) {
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text(state.message)));
+              } else if (state is RegisterSuccess) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text("Welcome ${state.user.name}")),
+                );
+                context.goNamed(RouterConstants.login);
+              }
+            },
+            builder: (context, state) {
+              if (state is RegisterLoading) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              return Column(
+                children: [
+                  TextField(
+                    controller: _nameController,
+                    decoration: const InputDecoration(labelText: 'Name'),
+                  ),
+                  TextField(
+                    controller: _emailController,
+                    decoration: const InputDecoration(labelText: 'Email'),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _passwordController,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: 'Password'),
+                  ),
+                  const SizedBox(height: 24),
+                  ElevatedButton(
+                    onPressed: () {
+                      final email = _emailController.text.trim();
+                      final password = _passwordController.text.trim();
+                      final name = _nameController?.text.trim();
+                      final cubit = context.read<RegisterCubit>();
+                      cubit.register(email, password, name ?? 'New User');
+                    },
+                    child: Text('Register'),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+import '../../../domain/entities/user_entity.dart';
+
+abstract class RegisterState {}
+
+class RegisterInitial extends RegisterState {}
+
+class RegisterLoading extends RegisterState {}
+
+class RegisterSuccess extends RegisterState {
+  final UserEntity user;
+  RegisterSuccess(this.user);
+}
+
+class RegisterFailure extends RegisterState {
+  final String message;
+  RegisterFailure(this.message);
+}
+
+import 'package:daily_expense_tracker/core/error/exceptions.dart';
+import 'package:daily_expense_tracker/features/auth/presentation/auth/register/state.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../domain/usecase/register_usecase.dart';
+// import 'register_state.dart';
+
+class RegisterCubit extends Cubit<RegisterState> {
+  final RegisterUseCase registerUseCase;
+
+  RegisterCubit({required this.registerUseCase}) : super(RegisterInitial());
+
+  Future<void> register(String email, String password, String? name) async {
+    emit(RegisterLoading());
+    try {
+      final user = await registerUseCase(email, password, name: name);
+      emit(RegisterSuccess(user));
+    } on ValidationException catch (e) {
+      emit(RegisterFailure(e.message));
+    } on ServerException catch (e) {
+      debugPrint("Register cubit ${e.message}");
+      emit(RegisterFailure("Unexpected error occurred"));
+      // emit(RegisterFailure(e.toString()));
+    }
+  }
+}
+
+import 'package:daily_expense_tracker/core/constants/router_constants.dart';
+import 'package:daily_expense_tracker/features/auth/presentation/auth/login/state.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
+import '../../../../../config/router/injection.dart';
+import '../../../domain/usecase/login_usecase.dart';
+import 'cubit.dart';
+
+class LoginPage extends StatefulWidget {
+  const LoginPage({super.key});
+
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocProvider(
+      create: (context) => LoginCubit(loginUseCase: sl<LoginUseCase>()),
+      child: Scaffold(
+        appBar: AppBar(title: Text('Login')),
+        body: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: BlocConsumer<LoginCubit, LoginState>(
+            listener: (context, state) {
+              if (state is LoginFailure) {
+                print("Error ${state.message}");
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text(state.message)));
+              } else if (state is LoginSuccess) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text("Welcome ${state.user.name}")),
+                );
+                context.goNamed(RouterConstants.expense);
+              }
+            },
+            builder: (context, state) {
+              if (state is LoginLoading) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              return Column(
+                children: [
+                  TextField(
+                    controller: _emailController,
+                    decoration: const InputDecoration(labelText: 'Email'),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _passwordController,
+                    decoration: const InputDecoration(labelText: 'Password'),
+                    obscureText: true,
+                  ),
+                  const SizedBox(height: 24),
+                  ElevatedButton(
+                    onPressed: () {
+                      final email = _emailController.text;
+                      final password = _passwordController.text;
+                      final cubit = context.read<LoginCubit>();
+                      cubit.login(email, password);
+                    },
+                    child: Text('Login'),
+                  ),
+                  const SizedBox(height: 5),
+                  Center(
+                    child: TextButton(
+                      onPressed: () {
+                        context.goNamed('register');
+                      },
+                      child: const Text("Don't have an account? Register"),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+import '../../../domain/entities/user_entity.dart';
+
+abstract class LoginState {}
+
+class LoginInitial extends LoginState {}
+
+class LoginLoading extends LoginState {}
+
+class LoginSuccess extends LoginState {
+  final UserEntity user;
+  LoginSuccess(this.user);
+}
+
+class LoginFailure extends LoginState {
+  final String message;
+  LoginFailure(this.message);
+}
+
+import 'package:daily_expense_tracker/core/error/exceptions.dart';
+import 'package:daily_expense_tracker/core/value_objects/email.dart';
+import 'package:daily_expense_tracker/core/value_objects/password.dart';
+import 'package:daily_expense_tracker/features/auth/presentation/auth/login/state.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../domain/usecase/login_usecase.dart';
+// import 'login_state.dart';
+
+class LoginCubit extends Cubit<LoginState> {
+  final LoginUseCase loginUseCase;
+
+  LoginCubit({required this.loginUseCase}) : super(LoginInitial());
+
+  Future<void> login(String emailStr, String passwordStr) async {
+    emit(LoginLoading());
+    try {
+      final email = Email(emailStr);
+      final password = Password(passwordStr);
+      final user = await loginUseCase(email.value, password.value);
+      emit(LoginSuccess(user));
+    } on ValidationException catch (e) {
+      emit(LoginFailure(e.message));
+    } on ServerException catch (e) {
+      emit(LoginFailure(e.message));
+    } catch (e) {
+      debugPrint("Login Cubit ${e.toString()}");
+      emit(LoginFailure("Unexpected error occurred"));
+    }
+  }
+}
+
+
+import '../entities/user_entity.dart';
+import '../repositories/auth_repository.dart';
+
+class RegisterUseCase {
+  final AuthRepository repository;
+  RegisterUseCase(this.repository);
+
+  Future<UserEntity> call(String email, String password, {String? name}) {
+    return repository.signUp(email, password, name: name);
+  }
+}
+
+import '../entities/user_entity.dart';
+import '../repositories/auth_repository.dart';
+
+class LoginUseCase {
+  final AuthRepository repository;
+
+  LoginUseCase(this.repository);
+
+  Future<UserEntity> call(String email, String password) {
+    return repository.login(email, password);
+  }
+}
+
+import '../entities/user_entity.dart';
+
+abstract class AuthRepository {
+  Future<UserEntity> signUp(String email, String password, {String? name});
+
+  Future<UserEntity> login(String email, String password);
+
+  Future<void> logout();
+
+  Future<bool> isLoggedIn();
+
+  Future<UserEntity?> getCurrentUser();
+}
+
+class UserEntity {
+  final String uid;
+  final String email;
+  final String? name;
+
+  const UserEntity({required this.uid, required this.email, this.name});
+}
+
+import 'package:daily_expense_tracker/features/auth/data/datasources/auth_local_datasource.dart';
+
+import '../../domain/entities/user_entity.dart';
+import '../../domain/repositories/auth_repository.dart';
+import '../datasources/auth_remote_data_source.dart';
+
+class AuthRepositoryImpl implements AuthRepository {
+  final AuthRemoteDataSource dataSource;
+  final AuthLocalDataSource localDataSource;
+
+  AuthRepositoryImpl(this.dataSource, this.localDataSource);
+
+  @override
+  Future<UserEntity> login(String email, String password) async {
+    final user = await dataSource.login(email, password);
+    await localDataSource.saveUser(user);
+    return user;
+  }
+
+  @override
+  Future<void> logout() async {
+    await localDataSource.clearUser();
+    return dataSource.logout();
+  }
+
+  @override
+  Future<bool> isLoggedIn() {
+    return dataSource.isLoggedIn();
+  }
+
+  @override
+  Future<UserEntity?> getCurrentUser() {
+    return dataSource.getCurrentUser();
+  }
+
+  @override
+  Future<UserEntity> signUp(String email, String password, {String? name}) {
+    return dataSource.signUp(email, password, name: name);
+  }
+}
+
+// GENERATED CODE - DO NOT MODIFY BY HAND
+
+part of 'user_model.dart';
+
+// **************************************************************************
+// TypeAdapterGenerator
+// **************************************************************************
+
+class UserModelAdapter extends TypeAdapter<UserModel> {
+  @override
+  final int typeId = 0;
+
+  @override
+  UserModel read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
+    return UserModel(
+      uid: fields[0] as String,
+      email: fields[1] as String,
+      name: fields[2] as String?,
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, UserModel obj) {
+    writer
+      ..writeByte(3)
+      ..writeByte(0)
+      ..write(obj.uid)
+      ..writeByte(1)
+      ..write(obj.email)
+      ..writeByte(2)
+      ..write(obj.name);
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UserModelAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
+
+import 'package:hive/hive.dart';
+import '../../domain/entities/user_entity.dart';
+
+part 'user_model.g.dart';
+
+@HiveType(typeId: 0)
+class UserModel extends UserEntity {
+  @HiveField(0)
+  final String uid;
+
+  @HiveField(1)
+  final String email;
+
+  @HiveField(2)
+  final String? name;
+
+  const UserModel({
+    required this.uid,
+    required this.email,
+    this.name,
+  }) : super(uid: uid, email: email, name: name);
+
+  factory UserModel.fromMap(Map<String, dynamic> map, String uid) {
+    return UserModel(
+      uid: uid,
+      email: map['email'] ?? '',
+      name: map['name'],
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'email': email,
+      'name': name,
+    };
+  }
+}
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../../../core/error/exceptions.dart';
+import '../models/user_model.dart';
+
+class AuthRemoteDataSource {
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  Future<UserModel> signUp(
+    String email,
+    String password, {
+    String? name,
+  }) async {
+    try {
+      final userCredential = await _auth.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      final uid = userCredential.user!.uid;
+      final userModel = UserModel(uid: uid, email: email, name: name);
+
+      await _firestore.collection('users').doc(uid).set(userModel.toMap());
+      return userModel;
+    } on FirebaseAuthException catch (e) {
+      throw ServerException(e.message ?? 'Sign up failed');
+    } catch (_) {
+      throw ServerException('Unexpected error during sign up');
+    }
+  }
+
+  Future<UserModel> login(String email, String password) async {
+    try {
+      final userCredential = await _auth.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      final uid = userCredential.user!.uid;
+      final snapshot = await _firestore.collection('users').doc(uid).get();
+
+      return UserModel.fromMap(snapshot.data()!, uid);
+    } on FirebaseAuthException catch (e) {
+      throw ServerException(e.message ?? 'Login failed');
+    } catch (_) {
+      throw ServerException('Unexpected error during login');
+    }
+  }
+
+  Future<void> logout() async {
+    await _auth.signOut();
+  }
+
+  Future<bool> isLoggedIn() async {
+    return _auth.currentUser != null;
+  }
+
+  Future<UserModel?> getCurrentUser() async {
+    final user = _auth.currentUser;
+    if (user == null) return null;
+
+    final snapshot = await _firestore.collection('users').doc(user.uid).get();
+    return UserModel.fromMap(snapshot.data()!, user.uid);
+  }
+}
+
+import 'package:flutter/foundation.dart';
+import 'package:hive_flutter/adapters.dart';
+
+import '../models/user_model.dart';
+
+abstract class AuthLocalDataSource {
+  Future<void> saveUser(UserModel user);
+
+  Future<UserModel?> getUser();
+
+  Future<void> clearUser();
+}
+
+class AuthLocalDataSourceImpl implements AuthLocalDataSource {
+  static const _userBoxName = 'userBox';
+
+  @override
+  Future<void> saveUser(UserModel user) async {
+    final box = await Hive.openBox<UserModel>(_userBoxName);
+    await box.put('user', user);
+    debugPrint("Logged in user: ${user?.name} (${user?.email})");
+  }
+
+  @override
+  Future<UserModel?> getUser() async {
+    final box = await Hive.openBox<UserModel>(_userBoxName);
+    return box.get('user');
+  }
+
+  @override
+  Future<void> clearUser() async {
+    final box = await Hive.openBox<UserModel>(_userBoxName);
+    await box.clear();
+  }
+}
+
+import 'package:connectivity_plus/connectivity_plus.dart';
+
+class NetworkService {
+  final Connectivity _connectivity = Connectivity();
+
+  Future<bool> hasConnection() async {
+    final result = await _connectivity.checkConnectivity();
+    return result != ConnectivityResult.none;
+  }
+
+  Stream<bool> get onConnectionChange {
+    return _connectivity.onConnectivityChanged.map(
+          (result) => result != ConnectivityResult.none,
+    );
+  }
+}
+
+import 'package:flutter/material.dart';
+
+import '../../config/router/injection.dart' as di;
+import 'network_service.dart';
+
+class NetworkListener extends StatelessWidget {
+  final Widget child;
+
+  const NetworkListener({required this.child, super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final networkService = di.sl<NetworkService>();
+
+    return StreamBuilder<bool>(
+      stream: networkService.onConnectionChange,
+      builder: (context, snapshot) {
+        final hasConnection = snapshot.data ?? true;
+        return Stack(
+          children: [
+            child,
+            if (!hasConnection)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: Container(
+                  color: Colors.red,
+                  padding: const EdgeInsets.all(8),
+                  child: const Text(
+                    'No Internet Connection',
+                    style: TextStyle(color: Colors.white),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+abstract class Failure {
+  final String message;
+  Failure(this.message);
+}
+
+class ServerFailure extends Failure {
+  ServerFailure(String message) : super(message);
+}
+
+class ValidationFailure extends Failure {
+  ValidationFailure(String message) : super(message);
+}
+
+class ServerException implements Exception {
+  final String message;
+  ServerException(this.message);
+}
+
+class ValidationException implements Exception {
+  final String message;
+  ValidationException(this.message);
+}
+
+class RouterConstants {
+  static const String register = "register";
+  static const String login = "login";
+  static const String expense = "expense";
+  static const String splash = "splash";
+}
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:daily_expense_tracker/features/auth/data/datasources/auth_local_datasource.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:get_it/get_it.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:hive_flutter/adapters.dart';
+import '../../core/network/network_service.dart';
+import '../../features/auth/data/datasources/auth_remote_data_source.dart';
+import '../../features/auth/data/repositories/auth_repository_impl.dart';
+import '../../features/auth/domain/repositories/auth_repository.dart';
+import '../../features/auth/domain/usecase/login_usecase.dart';
+import '../../features/auth/domain/usecase/register_usecase.dart';
+import '../../features/expense/data/datasources/expense_remote_datasources.dart';
+import '../../features/expense/data/repositories/expense_repository_impl.dart';
+import '../../features/expense/domain/repositories/expense_repository.dart';
+import '../../features/expense/domain/usecase/add_expense_usecase.dart';
+import '../../features/expense/domain/usecase/delete_expense_usecase.dart';
+import '../../features/expense/domain/usecase/get_expense_usecase.dart';
+import '../../features/expense/domain/usecase/mark_invalid_expense_usecase.dart';
+import '../../features/expense/domain/usecase/update_expense_usecase.dart';
+import '../../features/expense/presentation/expense/cubit.dart';
+// import '../../features/auth/presentation/auth/cubit.dart';
+
+final sl = GetIt.instance;
+
+Future<void> init() async {
+  //Register Hive
+  final authBox = await Hive.openBox('authBox');
+  sl.registerLazySingleton(() => authBox);
+
+  //firebase
+  sl.registerLazySingleton(() => FirebaseAuth.instance);
+  sl.registerLazySingleton(() => FirebaseFirestore.instance);
+  final userId = FirebaseAuth.instance.currentUser?.uid ?? '';
+  //Data Sources
+  sl.registerLazySingleton<AuthLocalDataSource>(
+    () => AuthLocalDataSourceImpl(),
+  );
+  sl.registerLazySingleton<AuthRemoteDataSource>(() => AuthRemoteDataSource());
+
+  //Repository
+  sl.registerLazySingleton<AuthRepository>(
+    () => AuthRepositoryImpl(
+      sl<AuthRemoteDataSource>(),
+      sl<AuthLocalDataSource>(),
+    ),
+  );
+  sl.registerLazySingleton(() => LoginUseCase(sl()));
+  sl.registerLazySingleton(() => RegisterUseCase(sl()));
+  // sl.registerFactory(
+  //   () => AuthCubit(loginUseCase: sl(), registerUseCase: sl()),
+  // );
+
+  // Data Sources
+  sl.registerLazySingleton<ExpenseRemoteDataSource>(
+    () => ExpenseRemoteDataSourceImpl(sl()),
+  );
+
+  // Repository
+  sl.registerLazySingleton<ExpenseRepository>(
+    () => ExpenseRepositoryImpl(sl()),
+  );
+
+  // UseCases
+  sl.registerLazySingleton(() => GetExpensesUseCase(sl()));
+  sl.registerLazySingleton(() => AddExpenseUseCase(sl()));
+  sl.registerLazySingleton(() => UpdateExpenseUseCase(sl()));
+  sl.registerLazySingleton(() => DeleteExpenseUseCase(sl()));
+  sl.registerLazySingleton(() => MarkInvalidExpenseUseCase(sl()));
+
+  // Cubit
+  sl.registerFactory(
+    () => ExpenseCubit(
+      getExpenses: sl(),
+      addExpense: sl(),
+      updateExpense: sl(),
+      deleteExpense: sl(),
+      markInvalidExpense: sl(),
+      networkService: sl(),
+    ),
+  );
+  sl.registerLazySingleton(() => NetworkService());
+}
+
+import 'package:daily_expense_tracker/core/constants/router_constants.dart';
+import 'package:daily_expense_tracker/features/auth/presentation/auth/login/view.dart';
+import 'package:daily_expense_tracker/features/auth/presentation/auth/register/view.dart';
+import 'package:daily_expense_tracker/features/expense/presentation/expense/view.dart';
+import 'package:daily_expense_tracker/features/splash/presentation/splash_page.dart';
+import 'package:go_router/go_router.dart';
+
+final appRouter = GoRouter(
+  initialLocation: '/${RouterConstants.splash}',
+  routes: [
+    GoRoute(
+      path: '/${RouterConstants.login}',
+      name: RouterConstants.login,
+      builder: (context, state) => LoginPage(),
+    ),
+    GoRoute(
+      path: '/${RouterConstants.register}',
+      name: RouterConstants.register,
+      builder: (context, state) => RegisterPage(),
+    ),
+    GoRoute(
+      path: '/${RouterConstants.expense}',
+      name: RouterConstants.expense,
+      builder: (context, state) => ExpensePage(),
+    ),
+    GoRoute(
+      path: '/${RouterConstants.splash}',
+      name: RouterConstants.splash,
+      builder: (context, state) => SplashPage(),
+    ),
+  ],
+);
+
+

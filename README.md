@@ -1,19 +1,39 @@
-# daily_expense_tracker
+# 💰 Flutter Expense Tracker App
 
-A new Flutter project.
+A Flutter application for tracking daily expenses with **Firebase Authentication**, **Cloud Firestore** for remote storage, and **Hive** for offline storage.  
+The app uses **BLoC (Cubit)** for state management and stores the user locally to check if they are logged in on app startup.
 
-## Getting Started
+---
 
-This project is a starting point for a Flutter application.
+## 📸 Screenshots
 
-A few resources to get you started if this is your first Flutter project:
+| Splash Screen | Login Screen | Register Screen | Expense List |
+|--------------|--------------|-----------------|--------------|
+| ![Splash](screenshots/splash.png) | ![Login](screenshots/login.png) | ![Register](screenshots/register.png) | ![List](screenshots/expense_list.png) |
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+> 📌 Store the actual screenshot images in the `screenshots/` folder of your project.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
-# codebase_Assignment
-# codebase_Assignment
-# codebase_Assignment
+
+> 📌 Replace these placeholders with actual screenshots stored in a `screenshots/` folder.
+
+---
+
+## ✨ Features
+
+- 🔑 **Firebase Authentication** for secure login
+- 📂 **Hive local storage** for offline persistence
+- ☁ **Firestore** for remote database
+- 📱 **Real-time expense list updates**
+- 🖋 **Add, edit, delete, mark invalid** expenses
+- 💡 **Splash screen** that automatically checks login status
+- ⚡ **BLoC (Cubit)** for predictable state management
+- 🛠 **GetIt** for dependency injection
+
+---
+
+## 🚀 Getting Started
+
+### 1️⃣ Clone the repository
+```bash
+git clone https://github.com/yourusername/expense-tracker.git
+cd expense-tracker
